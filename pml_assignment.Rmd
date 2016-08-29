@@ -1,0 +1,70 @@
+---
+title: "Practical Machine Learning - Course Assignment"
+author: "Sascha C."
+date: "29 Augustus 2016"
+output: html_document
+---
+
+### Executive summary
+
+This study used [training data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants](http://groupware.les.inf.puc-rio.br/har/), who performed barbell lifts in five different ways. I trained a Random Forest model on the data with 10-fold cross validation in order to predict the manner in which participants did the exercise. The classification accuracy of the final model was 99.95% for the training data.
+
+### 1. Loading data and packages
+
+```{r message=FALSE,warning=FALSE, cache=TRUE}
+library(caret);library(parallel);library(doParallel);require(nnet);
+training0<- read.csv("pml-training.csv")
+testing0<-read.csv("pml-testing.csv")
+```
+### 2. Preprocessing
+
+The preprocessing was identical for training and test data. The most important steps were:
+
+* Removing predictors with near zero variances 
+* K nearest neighbor imputation
+* Principal Component Analysis (PCA) of the predictors corresponding to accelerometer data. I performed this analysis in order to reduce the number of predictors and because the accelerometer predictors were likely to be correlated. In Figure 1, I plotted the cumulative proportion of explained variance against the number of principal components in the training data. I decided to select a subset of 40 principal components as predictors, since at that point little variance was gained by retaining additional components.
+
+```{r cache=TRUE,fig.height=3.5,fig.width=3.5,fig.align='center'}
+classe<-training0$classe
+#Remove near zero variables
+nsv <- nearZeroVar(training0,saveMetrics=TRUE)
+training1<-training0[,which(nsv$nzv=="FALSE")]
+testing1<-testing0[,which(nsv$nzv=="FALSE")]
+#Remove  Class variable predictors that do not correspond to accelerometer data
+training2<-training1[,-c(1:6,100)]
+testing2<-testing1[,-c(1:6,100)]
+#knn imputation
+knni<-preProcess(training2,method="knnImpute")
+training3<-predict(knni,training2)
+testing3<-predict(knni,testing2)
+#Principal component analysis
+pca<-prcomp(training3)
+training4<-predict(pca,training3)
+testing4<-predict(pca,testing3)
+# Combine the first 40 PC's with remaining predictors (except for column 1), 
+training5<-cbind(training1[,2:6],training4[,1:40])
+testing5<-cbind(testing1[,2:6],testing4[,1:40])
+plot(summary(pca)$importance[3,],ylab = "Variance Explained", xlab = "Principal Component")
+```
+
+### 3. Model fitting and prediction
+
+I fit a Random Forest model on the training data using 10-fold cross validation. Moreover, I allowed for parallel processing to speed up the computation process. For the training data, the average accuracy of the final model in the 10 folds was 99.95%, i.e., the expected out-of-sample error rate was 0.05% (*see confusion matrix below*). The final model was used to predict the classes in the test data.
+
+```{r cache=TRUE, message=FALSE, warning=FALSE}
+#Set training options
+cvCtrl <- trainControl(method = "cv",
+                       number = 10,
+                       allowParallel = TRUE)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+#Train model, show confusion matrix, and use model to predict test data
+set.seed(111)
+if(file.exists("rfModel.Rda")){
+  load("rfModel.Rda")} else {
+m<-train(classe~.,method="rf",data=training5,trControl=cvCtrl)
+}
+stopCluster(cluster)
+p<-predict(m,testing5)
+confusionMatrix.train(m)
+````
